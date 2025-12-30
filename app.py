@@ -230,8 +230,15 @@ if do_process:
             df_today_key = df_today_ind[KEY_COLS].copy()
             df_today_key["Tanggal Perdagangan Terakhir"] = df_today_key["Tanggal Perdagangan Terakhir"].astype(str)
 
-            out_a = pd.concat([df_today_key, df_today_ind[OUT_A_INDICATORS]], axis=1)
-            out_b = pd.concat([df_today_key, df_today_ind[OUT_B_INDICATORS]], axis=1)
+            out_a_cols = KEY_COLS + OUT_A_INDICATORS
+            out_b_cols = KEY_COLS + OUT_B_INDICATORS
+            
+            # Buat DF indikator hari ini, lalu pastikan semua kolom ada (kalau belum ada → NaN)
+            tmp_a = df_today_ind.reindex(columns=OUT_A_INDICATORS)
+            tmp_b = df_today_ind.reindex(columns=OUT_B_INDICATORS)
+            
+            out_a = pd.concat([df_today_key, tmp_a], axis=1).reindex(columns=out_a_cols)
+            out_b = pd.concat([df_today_key, tmp_b], axis=1).reindex(columns=out_b_cols)
 
             # sort wajib untuk output: tanggal lalu emiten
             out_a = _sort_date_emiten(out_a)
