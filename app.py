@@ -252,10 +252,20 @@ if do_process:
             # --- generate 1 file excel download: 28 kolom input + semua indikator untuk hari ini
             df_today_input = st.session_state.validated_df.copy()
             df_today_input["Tanggal Perdagangan Terakhir"] = df_today_input["Tanggal Perdagangan Terakhir"].astype(str)
-
-            # gabung indikator A+B untuk hari ini
-            all_ind = pd.concat([df_today_ind[OUT_A_INDICATORS], df_today_ind[OUT_B_INDICATORS]], axis=1)
-            out_download = pd.concat([df_today_input[CANON_COLS_28], all_ind], axis=1)
+            
+            # build indikator table dengan key, lalu merge by key (bukan concat)
+            ind_cols = ["Tanggal Perdagangan Terakhir", "Kode Saham"] + OUT_A_INDICATORS + OUT_B_INDICATORS
+            
+            df_today_ind2 = df_today_ind.copy()
+            df_today_ind2["Tanggal Perdagangan Terakhir"] = pd.to_datetime(df_today_ind2["Tanggal Perdagangan Terakhir"]).dt.date.astype(str)
+            
+            ind_table = df_today_ind2[ind_cols].copy()
+            
+            out_download = df_today_input[CANON_COLS_28].merge(
+                ind_table,
+                how="left",
+                on=["Tanggal Perdagangan Terakhir", "Kode Saham"],
+            )
 
             # final sort: tanggal, emiten
             out_download["Tanggal Perdagangan Terakhir"] = pd.to_datetime(out_download["Tanggal Perdagangan Terakhir"], errors="coerce")
