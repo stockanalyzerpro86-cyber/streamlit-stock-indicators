@@ -257,11 +257,15 @@ if do_process:
             xbytes = to_excel_bytes(out_download, sheet_name="OUTPUT")
             st.success("Selesai. Silakan download file output.")
 
+            # Ambil tanggal dari file upload (ambil yang paling baru)
+            dmax = pd.to_datetime(st.session_state.validated_df["Tanggal Perdagangan Terakhir"]).max()
+            ddmmyy = pd.to_datetime(dmax).strftime("%d%m%y")
+
             st.download_button(
-                "Download OUTPUT (.xlsx)",
-                data=xbytes,
-                file_name="OUTPUT_HARI_INI.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "Download OUTPUT (.xlsx)",
+            data=xbytes,
+            file_name=f"RekapSahamIndikator-{ddmmyy}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
         except Exception as e:
