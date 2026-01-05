@@ -206,11 +206,13 @@ if do_process:
             raw_merged = filter_keep_last_trading_days(raw_merged, "Tanggal Perdagangan Terakhir", keep_days=280)
             raw_merged = _sort_date_emiten(raw_merged)
 
-
-            st.write("DEBUG: RAW rows after merge:", len(raw_merged))
-            st.write("DEBUG: RAW unique dates:", raw_merged["Tanggal Perdagangan Terakhir"].nunique())
-            st.write("DEBUG: RAW date sample:", raw_merged["Tanggal Perdagangan Terakhir"].head(3).tolist())
-
+            show_debug = st.checkbox("Show debug", value=False)
+            if show_debug:
+                st.write(
+                    "DEBUG: RAW last 15 unique dates:",
+                    pd.Series(raw_merged["Tanggal Perdagangan Terakhir"].unique()).tail(15).tolist()
+                )
+            
             write_values(service, raw_id, "RAW!A1", _df_to_values(raw_merged))
 
             # --- Build historis untuk indikator dari RAW (pakai yang sudah tersimpan)
@@ -224,10 +226,6 @@ if do_process:
 
             # hitung indikator (per emiten, urutan tanggal dijaga di engine)
             df_ind = compute_indicators(raw_for_ind)
-
-            st.write("DEBUG: Indicators computed rows:", len(df_ind))
-            st.write("DEBUG: Indicators columns:", [c for c in df_ind.columns if c in ["Gain Harian", "Loss Harian", "RSI-9", "ATR-9"]])
-            st.dataframe(df_ind[["Kode Saham","Tanggal Perdagangan Terakhir","Penutupan","Gain Harian","Loss Harian"]].head(30), use_container_width=True)
 
             # ambil tanggal hari ini saja (sesuai file input)
             today_dates = pd.to_datetime(st.session_state.validated_df["Tanggal Perdagangan Terakhir"]).dt.date.unique()
