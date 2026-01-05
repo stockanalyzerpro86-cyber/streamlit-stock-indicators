@@ -7,6 +7,7 @@ from src.cleaning import parse_and_cast, make_indicator_inputs
 from src.indicators import compute_indicators
 from src.export import to_excel_bytes
 from src.sheets_client import build_sheets_service, get_values, write_values
+from src.retention import filter_keep_last_trading_days
 
 
 CANON_COLS_28 = [
@@ -202,6 +203,9 @@ if do_process:
             existing_raw = _read_sheet_as_df(service, raw_id, "RAW")
             raw_merged = _upsert_by_key(existing_raw, df_today_raw[CANON_COLS_28], ["Tanggal Perdagangan Terakhir", "Kode Saham"])
             raw_merged = _sort_date_emiten(raw_merged)
+            raw_merged = filter_keep_last_trading_days(raw_merged, "Tanggal Perdagangan Terakhir", keep_days=280)
+            raw_merged = _sort_date_emiten(raw_merged)
+
 
             st.write("DEBUG: RAW rows after merge:", len(raw_merged))
             st.write("DEBUG: RAW unique dates:", raw_merged["Tanggal Perdagangan Terakhir"].nunique())
@@ -231,18 +235,22 @@ if do_process:
             df_today_ind = df_ind[df_ind["Tanggal Perdagangan Terakhir"].isin(today_dates)].copy()
 
             # persiapan OUTPUT A/B
-            df_today_key = df_today_ind[KEY_COLS].copy()
-            df_today_key["Tanggal Perdagangan Terakhir"] = df_today_key["Tanggal Perdagangan Terakhir"].astype(str)
-
             out_a_cols = KEY_COLS + OUT_A_INDICATORS
             out_b_cols = KEY_COLS + OUT_B_INDICATORS
             
-            # Buat DF indikator hari ini, lalu pastikan semua kolom ada (kalau belum ada → NaN)
-            tmp_a = df_today_ind.reindex(columns=OUT_A_INDICATORS)
-            tmp_b = df_today_ind.reindex(columns=OUT_B_INDICATORS)
+            # key harus selalu dari input hari ini (agar output tidak kosong)
+            df_today_key = st.session_state.validated_df[KEY_COLS].copy()
+            df_today_key["Tanggal Perdagangan Terakhir"] = df_today_key["Tanggal Perdagangan Terakhir"].astype(str)
             
-            out_a = pd.concat([df_today_key, tmp_a], axis=1).reindex(columns=out_a_cols)
-            out_b = pd.concat([df_today_key, tmp_b], axis=1).reindex(columns=out_b_cols)
+            # indikator hari ini (keyed)
+            df_today_ind2 = df_today_ind.copy()
+            df_today_ind2["Tanggal Perdagangan Terakhir"] = pd.to_datetime(df_today_ind2["Tanggal Perdagangan Terakhir"]).dt.date.astype(str)
+            
+            ind_a = df_today_ind2.reindex(columns=["Tanggal Perdagangan Terakhir", "Kode Saham"] + OUT_A_INDICATORS)
+            ind_b = df_today_ind2.reindex(columns=["Tanggal Perdagangan Terakhir", "Kode Saham"] + OUT_B_INDICATORS)
+            
+            out_a = df_today_key.merge(ind_a, how="left", on=["Tanggal Perdagangan Terakhir", "Kode Saham"]).reindex(columns=out_a_cols)
+            out_b = df_today_key.merge(ind_b, how="left", on=["Tanggal Perdagangan Terakhir", "Kode Saham"]).reindex(columns=out_b_cols)
 
             # sort wajib untuk output: tanggal lalu emiten
             out_a = _sort_date_emiten(out_a)
@@ -251,13 +259,31 @@ if do_process:
             # upsert ke OUTPUT_A
             existing_a = _read_sheet_as_df(service, out_a_id, "OUTPUT_A")
             merged_a = _upsert_by_key(existing_a, out_a, ["Tanggal Perdagangan Terakhir", "Kode Saham"])
+            
+            # sort -> prune 280 hari -> sort lagi (biar rapi)
             merged_a = _sort_date_emiten(merged_a)
+            merged_a = filter_keep_last_trading_days(
+                merged_a,
+                date_col="Tanggal Perdagangan Terakhir",
+                keep_days=280,
+            )
+            merged_a = _sort_date_emiten(merged_a)
+            
             write_values(service, out_a_id, "OUTPUT_A!A1", _df_to_values(merged_a))
 
             # upsert ke OUTPUT_B
             existing_b = _read_sheet_as_df(service, out_b_id, "OUTPUT_B")
             merged_b = _upsert_by_key(existing_b, out_b, ["Tanggal Perdagangan Terakhir", "Kode Saham"])
+            
+            # sort -> prune 280 hari -> sort lagi
             merged_b = _sort_date_emiten(merged_b)
+            merged_b = filter_keep_last_trading_days(
+                merged_b,
+                date_col="Tanggal Perdagangan Terakhir",
+                keep_days=280,
+            )
+            merged_b = _sort_date_emiten(merged_b)
+            
             write_values(service, out_b_id, "OUTPUT_B!A1", _df_to_values(merged_b))
 
             # --- generate 1 file excel download: 28 kolom input + semua indikator untuk hari ini
@@ -270,7 +296,7 @@ if do_process:
             df_today_ind2 = df_today_ind.copy()
             df_today_ind2["Tanggal Perdagangan Terakhir"] = pd.to_datetime(df_today_ind2["Tanggal Perdagangan Terakhir"]).dt.date.astype(str)
             
-            ind_table = df_today_ind2[ind_cols].copy()
+            ind_table = df_today_ind2.reindex(columns=ind_cols).copy()
             
             out_download = df_today_input[CANON_COLS_28].merge(
                 ind_table,
