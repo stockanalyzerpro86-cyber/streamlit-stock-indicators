@@ -92,11 +92,15 @@ def _read_sheet_as_df(service, spreadsheet_id: str, sheet_name: str) -> pd.DataF
     values = get_values(service, spreadsheet_id, f"{sheet_name}!A1:ZZ")
     if not values:
         return pd.DataFrame()
+
     header = values[0]
     rows = values[1:]
     if not rows:
         return pd.DataFrame(columns=header)
-    return pd.DataFrame(rows, columns=header)
+
+    width = len(header)
+    norm_rows = [(r + [""] * (width - len(r)))[:width] for r in rows]
+    return pd.DataFrame(norm_rows, columns=header)
 
 
 def _df_to_values(df: pd.DataFrame):
