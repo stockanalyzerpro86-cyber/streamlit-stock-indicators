@@ -1,3 +1,6 @@
+from io import BytesIO
+import zipfile
+
 import pandas as pd
 import streamlit as st
 
@@ -267,16 +270,47 @@ if st.session_state.db_loaded:
         merged = merged.sort_values(["Tanggal Perdagangan Terakhir", "Kode Saham"], kind="mergesort")
         merged["Tanggal Perdagangan Terakhir"] = merged["Tanggal Perdagangan Terakhir"].dt.date.astype(str)
 
-        xbytes_db = to_excel_bytes(merged, sheet_name="OUTPUT")
-        fname = f"RekapSahamIndikator-{start_date:%d%m%y}-{end_date:%d%m%y}.xlsx"
-
-        st.download_button(
-            "Download OUTPUT (DB by range)",
-            data=xbytes_db,
-            file_name=fname,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="download_db_range",
-        )
+        unique_dates = merged["Tanggal Perdagangan Terakhir"].dropna().unique()
+        n_dates = len(unique_dates)
+        
+        if n_dates == 1:
+            # Single trading date -> download 1 XLSX
+            only_date = pd.to_datetime(unique_dates[0]).date()
+            xbytes_db = to_excel_bytes(merged, sheet_name="OUTPUT")
+            fname = f"RekapSahamIndikator-{only_date:%d%m%y}.xlsx"
+        
+            st.download_button(
+                "Download OUTPUT (single date)",
+                data=xbytes_db,
+                file_name=fname,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_db_single_date",
+            )
+        elif n_dates > 1:
+            # Multi trading dates -> ZIP per tanggal
+            zip_buf = BytesIO()
+            with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for d, df_day in merged.groupby("Tanggal Perdagangan Terakhir", sort=True):
+                    df_day = df_day.sort_values(["Kode Saham"], kind="mergesort").copy()
+                    xbytes_day = to_excel_bytes(df_day, sheet_name="OUTPUT")
+        
+                    d_dt = pd.to_datetime(d).date()
+                    fname_day = f"RekapSahamIndikator-{d_dt:%d%m%y}.xlsx"
+                    zf.writestr(fname_day, xbytes_day)
+        
+            zip_buf.seek(0)
+            fname_zip = f"RekapSahamIndikator-{start_date:%d%m%y}-{end_date:%d%m%y}.zip"
+        
+            st.download_button(
+                "Download ZIP (per tanggal)",
+                data=zip_buf.getvalue(),
+                file_name=fname_zip,
+                mime="application/zip",
+                key="download_db_zip_per_tanggal",
+            )
+        else:
+            st.warning("Tidak ada data pada range tersebut.")
+    
     else:
         st.info("Pilih start dan end date dulu.")
 
