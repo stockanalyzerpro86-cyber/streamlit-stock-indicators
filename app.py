@@ -42,6 +42,8 @@ CANON_COLS_28 = [
 ]
 
 KEY_COLS = ["Tanggal Perdagangan Terakhir", "Kode Saham", "Nama Perusahaan"]
+KEY2 = ["Tanggal Perdagangan Terakhir", "Kode Saham"]
+
 
 OUT_A_INDICATORS = [
     "SMA-5",
@@ -153,6 +155,131 @@ def _sort_date_emiten(df: pd.DataFrame) -> pd.DataFrame:
 st.set_page_config(page_title="Stock Indicators", layout="wide")
 st.title("Streamlit Stock Indicators App")
 st.caption("Upload Excel harian, validasi schema 28 kolom, hitung indikator, dan download output.")
+
+st.divider()
+st.subheader("Download dari Database (tanpa upload)")
+
+service_db = build_sheets_service(st.secrets["google_service_account"])
+raw_id_db = st.secrets["SPREADSHEET_RAW_ID"]
+out_a_id_db = st.secrets["SPREADSHEET_OUTPUT_A_ID"]
+out_b_id_db = st.secrets["SPREADSHEET_OUTPUT_B_ID"]
+
+if "db_loaded" not in st.session_state:
+    st.session_state.db_loaded = False
+
+if st.button("Load DB", key="btn_load_db"):
+    raw_db = _read_sheet_as_df(service_db, raw_id_db, "RAW")
+    out_a_db = _read_sheet_as_df(service_db, out_a_id_db, "OUTPUT_A")
+    out_b_db = _read_sheet_as_df(service_db, out_b_id_db, "OUTPUT_B")
+
+    st.session_state.raw_db = raw_db
+    st.session_state.out_a_db = out_a_db
+    st.session_state.out_b_db = out_b_db
+    st.session_state.db_loaded = True
+
+    st.success(f"Loaded DB: RAW={len(raw_db)} rows, OUT_A={len(out_a_db)} rows, OUT_B={len(out_b_db)} rows")
+
+if st.session_state.db_loaded:
+    raw_db = st.session_state.raw_db.copy()
+    out_a_db = st.session_state.out_a_db.copy()
+    out_b_db = st.session_state.out_b_db.copy()
+
+    if raw_db.empty:
+        st.warning("RAW masih kosong, tidak ada data untuk didownload.")
+        st.stop()
+
+    # Range berdasarkan RAW (source-of-truth tanggal)
+    raw_db["Tanggal Perdagangan Terakhir"] = pd.to_datetime(
+        raw_db["Tanggal Perdagangan Terakhir"], errors="coerce"
+    ).dt.date
+
+    min_d = raw_db["Tanggal Perdagangan Terakhir"].min()
+    max_d = raw_db["Tanggal Perdagangan Terakhir"].max()
+
+    picked = st.date_input(
+        "Pilih range tanggal (berdasarkan RAW)",
+        value=(min_d, max_d),
+        min_value=min_d,
+        max_value=max_d,
+        key="db_range_picker",
+    )
+
+    # lanjutkan blok start_date,end_date dan merge di sini...
+
+
+    if isinstance(picked, tuple) and len(picked) == 2:
+        start_date, end_date = picked
+
+        # Filter RAW by range
+        raw_range = raw_db[
+            (raw_db["Tanggal Perdagangan Terakhir"] >= start_date) &
+            (raw_db["Tanggal Perdagangan Terakhir"] <= end_date)
+        ].copy()
+
+        # Kunci join harus string (konsisten dengan sheet output)
+        raw_range["Tanggal Perdagangan Terakhir"] = raw_range["Tanggal Perdagangan Terakhir"].astype(str)
+
+        # Pastikan schema OUTPUT_A/B sesuai header source-of-truth
+        out_a_cols = KEY_COLS + OUT_A_INDICATORS
+        out_b_cols = KEY_COLS + OUT_B_INDICATORS
+        out_a_db = out_a_db.reindex(columns=out_a_cols)
+        out_b_db = out_b_db.reindex(columns=out_b_cols)
+
+        # Buat tanggal output A/B jadi string date, lalu filter range
+        out_a_db["Tanggal Perdagangan Terakhir"] = pd.to_datetime(
+            out_a_db["Tanggal Perdagangan Terakhir"], errors="coerce"
+        ).dt.date.astype(str)
+
+        out_b_db["Tanggal Perdagangan Terakhir"] = pd.to_datetime(
+            out_b_db["Tanggal Perdagangan Terakhir"], errors="coerce"
+        ).dt.date.astype(str)
+
+        start_s = str(start_date)
+        end_s = str(end_date)
+
+        out_a_range = out_a_db[
+            (out_a_db["Tanggal Perdagangan Terakhir"] >= start_s) &
+            (out_a_db["Tanggal Perdagangan Terakhir"] <= end_s)
+        ].copy()
+
+        out_b_range = out_b_db[
+            (out_b_db["Tanggal Perdagangan Terakhir"] >= start_s) &
+            (out_b_db["Tanggal Perdagangan Terakhir"] <= end_s)
+        ].copy()
+
+        # Robust: jangan join pakai Nama Perusahaan (ambil dari RAW saja)
+        out_a_range = out_a_range.drop(columns=["Nama Perusahaan"], errors="ignore")
+        out_b_range = out_b_range.drop(columns=["Nama Perusahaan"], errors="ignore")
+
+        # (Opsional safety) hilangkan duplikat key kalau ada edit manual di Sheets
+        raw_range = raw_range.drop_duplicates(subset=KEY2, keep="last")
+        out_a_range = out_a_range.drop_duplicates(subset=KEY2, keep="last")
+        out_b_range = out_b_range.drop_duplicates(subset=KEY2, keep="last")
+
+        merged = (
+            raw_range[CANON_COLS_28]
+            .merge(out_a_range, how="left", on=KEY2)
+            .merge(out_b_range, how="left", on=KEY2)
+        )
+
+        # Sort final
+        merged["Tanggal Perdagangan Terakhir"] = pd.to_datetime(merged["Tanggal Perdagangan Terakhir"], errors="coerce")
+        merged = merged.sort_values(["Tanggal Perdagangan Terakhir", "Kode Saham"], kind="mergesort")
+        merged["Tanggal Perdagangan Terakhir"] = merged["Tanggal Perdagangan Terakhir"].dt.date.astype(str)
+
+        xbytes_db = to_excel_bytes(merged, sheet_name="OUTPUT")
+        fname = f"RekapSahamIndikator-{start_date:%d%m%y}-{end_date:%d%m%y}.xlsx"
+
+        st.download_button(
+            "Download OUTPUT (DB by range)",
+            data=xbytes_db,
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_db_range",
+        )
+    else:
+        st.info("Pilih start dan end date dulu.")
+
 
 uploaded = st.file_uploader("Upload file Excel Ringkasan Saham", type=["xlsx"])
 
